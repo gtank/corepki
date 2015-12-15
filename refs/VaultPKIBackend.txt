@@ -1,0 +1,137 @@
+﻿Top-Level Questions
+(And Jeff’s answers)
+
+**Who/what can get certificates?**
+
+Clients with a token granting read access to the PKI backend (e.g. /pki/creds/[policy])
+
+**What CNs should a client be able to get certificates for?**
+
+There are many possibilities. There are different possibilities for security
+risks given a compromised token, so these should be looked as potentially
+policy-defined capabilities:
+
+1. The client can get a certificate with a CN matching the display_name or a
+   key/value attribute of the client’s token.
+2. #1, but the client can also get certificates for subdomains.
+3. #1, and possibly #2, but the client can also get certificates for wildcards.
+4. The client can get a certificate for any subdomain of a given base domain
+   set in the backend’s configuration; options for
+   uniqueness/subdomains/wildcards.
+5. The client can get any certificate it asks for.
+
+Initially, #4 will be targeted.
+
+**When should certificates expire?**
+
+The backend should be defined with a normal and maximum expiration time,
+similar to other backends. It should be designed for short expirations.
+Expirations should be able to be set per-role.
+
+**What about CRLs and CA certs?**
+
+There will have to be an endpoint that is unauthenticated and returns a CRL.
+Since the idea behind the backend is that expiration times will be short, CRL
+length will likely not be too onerous. Similar unauthenticated endpoints can
+return the signing CA certificate.
+
+**CA certificate availability?**
+
+Following industry best practices, the PKI backend should use an intermediate
+CA cert rather than a root certificate. The intermediate CA certificate should
+be included with all issued certs, which allows immediate use with many
+applications, including Apache, Nginx, and Tomcat. It is up to the user to
+distribute the root certificate to users/machines.
+
+The backend could eventually issue its own intermediate CAs per-policy, given a
+root certificate with appropriate capabilities.
+
+**PEM vs. DER?**
+
+Since certificates will be transmitted over HTTP requests, PEM could be used as
+it is B64-encoded and can be embedded into JSON. Alternately, B64-encoded DER
+certificates could be used, as the newlines in PEM would have to be escaped in
+the JSON response. However, including the CA cert becomes a problem; this is
+simple to do in PEM, but for DER would require issuing PKCS#7 or PKCS#12
+formats. Both have pros and cons.
+
+The backend should support PEM; newlines should simply be escaped in the JSON
+response. This makes it simple to include the issuing CA certificate, which
+makes it simple to immediately use the certificates with a wide variety of
+software.
+
+DER can be a later enhancement.
+
+**ACME?**
+
+ACME is defined at https://letsencrypt.github.io/acme-spec/. After a skim, it
+appears to be both too rigid and too over engineered for what we need, because
+Vault is handling the authentication/authorization aspect that much of ACME is
+concerned with.
+
+
+Should certificates be marked for Server use, Client use, both, or
+role-controlled?  This should be role-controlled; however, in a first
+implementation this can be “both”. A policy flag can be added later to restrict
+this, defaulting to both. Both is a reasonable policy for service-to-service
+interactions, as the same certificate can be used for identification regardless
+of which side initiates the connection, and the same validation policy in Vault
+will be used regardless of whether we’re requesting one or more certs.
+
+
+**Allow renewals using the same private key, or no renew support?**
+
+Reusing private keys will reduce generation load on the server, but also allows
+private keys that escape in the wild to be used for malicious purposes, such as
+decrypting traffic for future certs. Role controlled, maybe?
+
+
+**Should clients fetch both private keys and certs, or submit CSRs?**
+
+Clients should be able to do both, according to role. CSR support can be
+implemented later; most clients will appreciate having this work done
+centrally, although some might want SAN/IPSAN and other support.[a][b]
+
+
+**Cipher suites/signature algorithms**
+
+SHA2 only for signatures; browsers are dropping support for SHA1. Minimum of
+2048 bits for RSA keys and 256 bits for ECDSA; eventually, configurable
+minimums. RSA is the default due to faster verification of signatures (which is
+expected to be the general case), although ECDSA is faster for
+signing.[c][d][e]
+
+
+**CRLs vs OCSP?**
+
+Both probably need to be supported. With short expirations, CRLs should be
+small, so an initial implementation supporting just CRLs is probably fine.
+
+
+**API**
+
+I believe the most recent changes have addressed the issues, and the
+documentation in the tree was rather different from here, so I’m sanitizing
+them; see [f] for the most recent information, and either leave comments here
+or make comments in-line in the github source.
+
+
+[a] I think initially we should avoid CSR's. They are a nightmare generally, so
+    anything to make PKI easier is a win.
+
+[b] The main reason would be to accommodate subject alternate names and
+    especially IP SANs. I agree leaving this out initially is fine, especially as
+    most of the world can handle SNI.
+
+[c] With Vault, the approach we take is using highly conservative defaults, and
+    prioritizing safety over speed. I think we should pick the highest settings
+    that are broadly supported for maximum future proofing.
+
+[d] Both are quite well supported at this point; RSA probably a bit more so.
+    Both of these settings are safe for at least the near term. Same with SHA2 for
+    the signature.
+
+[e] Yep, I'm not disagreeing! I'm saying lets push users towards the most
+    secure defaults.
+
+[f] https://github.com/jefferai/vault/blob/f-pki/website/source/docs/secrets/pki/index.html.md
